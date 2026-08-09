@@ -4989,15 +4989,23 @@ void SettingsWindow::PollUpdateCheck()
             const char* nameSuffix) -> std::string {
             const std::string needle = "\"name\":\"";
             const size_t suffixLen = std::strlen(nameSuffix);
+            // 发行包统一前缀：兼容带版本号（-1.0.3）与不带版本号的资产名，
+            // 同时排除 Gitee 自动生成的源码包（v1.0.3.zip 等）。
+            const char* packagePrefix = "SparkDesktop-portable-x64";
+            const size_t prefixLen = std::strlen(packagePrefix);
             size_t pos = 0;
             while ((pos = json.find(needle, pos)) != std::string::npos)
             {
                 const size_t nameStart = pos + needle.size();
                 const size_t nameEnd = json.find('"', nameStart);
                 if (nameEnd == std::string::npos) return {};
-                if (nameEnd - nameStart >= suffixLen &&
+                const size_t nameLen = nameEnd - nameStart;
+                if (nameLen >= suffixLen &&
                     json.compare(nameEnd - suffixLen, suffixLen,
-                        nameSuffix) == 0)
+                        nameSuffix) == 0 &&
+                    nameLen >= prefixLen &&
+                    json.compare(nameStart, prefixLen,
+                        packagePrefix) == 0)
                 {
                     // GitHub 用 browser_download_url，Gitee 用 download_url。
                     const char* field1 = "\"browser_download_url\":\"";

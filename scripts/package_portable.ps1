@@ -14,8 +14,10 @@ if (-not (Test-Path -LiteralPath $stage -PathType Container)) {
 }
 $version = (Get-Content (Join-Path $repoRoot "version.json") -Raw |
     ConvertFrom-Json).version
-$zipName = "SparkDesktop-portable-x64-$version.zip"
-$zipPath = Join-Path $repoRoot $zipName
+# 自动更新已按内容校验，发行包文件名不再带版本号（避免每个版本都要
+# 重命名资产）；产物统一输出到 .build 构建目录，不污染仓库根。
+$zipName = "SparkDesktop-portable-x64.zip"
+$zipPath = Join-Path (Join-Path $repoRoot ".build") $zipName
 $shaPath = "$zipPath.sha256"
 
 if (Test-Path -LiteralPath $zipPath) {

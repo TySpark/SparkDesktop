@@ -80,6 +80,6 @@ echo Taskbar hook:     %STAGE%\SnowDesktopTaskbarHook.dll
 echo Updater:          %STAGE%\SparkDesktopUpdater.exe
 echo Widgets:          %STAGE%\widgets
 echo Languages:        %STAGE%\lang
-echo Portable zip + .sha256:  repository root (SparkDesktop-portable-x64-*.zip)
+echo Portable zip + .sha256:  .build\SparkDesktop-portable-x64.zip
 echo The %STAGE%\ folder and the portable zip are git-ignored.
 exit /b 0

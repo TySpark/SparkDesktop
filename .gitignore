@@ -9,8 +9,7 @@ TestResults/
 build/
 .build_debug/
 release/
-SparkDesktop-portable-*.zip
-SparkDesktop-portable-*.zip.sha256
+# 发行包统一输出到 .build\（已由 .build/ 忽略），不再在仓库根生成。
 /docs/html/
 SnowDesktop_crash.log
 SnowDesktop.log
