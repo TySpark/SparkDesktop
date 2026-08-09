@@ -1271,6 +1271,15 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
+    // 立即提交：动画调度只在交互/动画时 Flush，静态场景下不 Flush
+    // 会导致快捷导航内容（应用列表）渲染后不可见（可点击但无显示）。
+    if (!FlushPendingQuickNavigationCompositionCommit())
+    {
+        RecoverQuickNavCompositionFailure(
+            L"Paint Commit Flush", E_FAIL);
+        EndPaint(hwnd, &ps);
+        return;
+    }
     quickNavCompositionRenderRecoveryPending_ = false;
 
     EndPaint(hwnd, &ps);
