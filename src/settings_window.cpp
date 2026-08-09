@@ -5223,6 +5223,8 @@ void SettingsWindow::StartUpdateZipDownload()
     options.url = Utf8ToWide(updateZipUrl_);
     options.timeoutMs = 120000;
     options.allowedDomains = {
+        "gitee.com",
+        "foruda.gitee.com",
         "github.com",
         "release-assets.githubusercontent.com",
         "objects.githubusercontent.com",
