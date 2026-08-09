@@ -4756,7 +4756,7 @@ void SettingsWindow::PerformUpdateCheck()
     options.widgetId = L"SparkDesktop.UpdateCheck";
     options.url =
         L"https://api.github.com/repos/TySpark/"
-        L"SparkDesktop/releases/latest";
+        L"SparkDesktop/releases?per_page=20";
     options.headers =
         L"Accept: application/vnd.github+json\r\n"
         L"X-GitHub-Api-Version: 2022-11-28\r\n";
@@ -4888,27 +4888,7 @@ void SettingsWindow::PollUpdateCheck()
             return;
         }
 
-        auto extractJsonString = [](const std::string& json,
-                                     const char* field) -> std::string {
-            const std::string key = "\"" + std::string(field) + "\"";
-            size_t pos = json.find(key);
-            if (pos == std::string::npos) return {};
-            pos += key.size();
-            pos = json.find(':', pos);
-            if (pos == std::string::npos) return {};
-            ++pos;
-            while (pos < json.size() &&
-                (json[pos] == ' ' || json[pos] == '\t' ||
-                 json[pos] == '\r' || json[pos] == '\n'))
-                ++pos;
-            if (pos >= json.size() || json[pos] != '"') return {};
-            ++pos;
-            size_t end = json.find('"', pos);
-            if (end == std::string::npos) return {};
-            return json.substr(pos, end - pos);
-        };
-
-        // 在 releases/latest 的 assets[] 中按资产名后缀精确查找
+        // 在 releases 的 assets[] 中按资产名后缀精确查找
         // browser_download_url（.zip 便携包 / .sha256 校验文件）。
         auto extractAssetUrlBySuffix = [](const std::string& json,
             const char* nameSuffix) -> std::string {
@@ -4938,28 +4918,9 @@ void SettingsWindow::PollUpdateCheck()
             return {};
         };
 
-        std::string tag =
-            extractJsonString(response.body, "tag_name");
-        if (tag.empty())
-        {
-            updateCheckStatusKey_ =
-                L10N_KEY("app.settings.update_parse_failed");
-            updateCheckStatus_ =
-                _L("app.settings.update_parse_failed");
-            return;
-        }
-
-        if (tag[0] == 'v' || tag[0] == 'V')
-            tag.erase(0, 1);
-
-        const std::string htmlUrl =
-            extractJsonString(response.body, "html_url");
-        // 便携更新包与校验文件资产直链（发布时附带这两个资产）。
-        updateZipUrl_ = extractAssetUrlBySuffix(
-            response.body, ".zip");
-        updateSha256Url_ = extractAssetUrlBySuffix(
-            response.body, ".sha256");
-
+        // /releases 返回 JSON 数组（按发布时间降序）。GitHub 的
+        // releases/latest 按发布时间而非版本号选"最新"，发布过旧版本
+        // 的 Release 后会误判；这里遍历全部条目取版本号最大的。
         auto compareVersion = [](const std::string& a,
                                   const std::string& b) -> int {
             std::istringstream sa(a), sb(b);
@@ -4974,10 +4935,53 @@ void SettingsWindow::PollUpdateCheck()
             return 0;
         };
 
-        latestVersion_ = tag;
-        downloadUrl_ = htmlUrl;
+        std::string bestTag, bestBlock;
+        const std::string tagNeedle = "\"tag_name\":\"";
+        size_t scan = 0;
+        while ((scan = response.body.find(tagNeedle, scan)) !=
+            std::string::npos)
+        {
+            const size_t tagStart = scan + tagNeedle.size();
+            const size_t tagEnd = response.body.find('"', tagStart);
+            if (tagEnd == std::string::npos) break;
+            std::string tag = response.body.substr(tagStart,
+                tagEnd - tagStart);
+            if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V'))
+                tag.erase(0, 1);
+            const size_t nextTag = response.body.find(tagNeedle, tagEnd);
+            const size_t blockEnd = nextTag == std::string::npos
+                ? response.body.size() : nextTag;
+            const std::string block =
+                response.body.substr(scan, blockEnd - scan);
+            if (bestTag.empty() || compareVersion(tag, bestTag) > 0)
+            {
+                bestTag = tag;
+                bestBlock = block;
+            }
+            scan = tagEnd;
+        }
 
-        if (compareVersion(SNOWDESKTOP_VERSION, tag) >= 0)
+        if (bestBlock.empty())
+        {
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.update_parse_failed");
+            updateCheckStatus_ =
+                _L("app.settings.update_parse_failed");
+            return;
+        }
+
+        // 便携更新包与校验文件资产直链（发布时附带这两个资产）。
+        updateZipUrl_ = extractAssetUrlBySuffix(
+            bestBlock, ".zip");
+        updateSha256Url_ = extractAssetUrlBySuffix(
+            bestBlock, ".sha256");
+        downloadUrl_ =
+            "https://github.com/TySpark/SparkDesktop/releases/tag/v" +
+            bestTag;
+
+        latestVersion_ = bestTag;
+
+        if (compareVersion(SNOWDESKTOP_VERSION, bestTag) >= 0)
         {
             updateAvailable_ = false;
             updateCheckStatusKey_ =
@@ -4991,9 +4995,9 @@ void SettingsWindow::PollUpdateCheck()
             updateAvailable_ = true;
             updateCheckStatusKey_ =
                 L10N_KEY("app.settings.new_version");
-            updateCheckStatusArgument_ = tag;
+            updateCheckStatusArgument_ = bestTag;
             updateCheckStatus_ =
-                _LF("app.settings.new_version", tag);
+                _LF("app.settings.new_version", bestTag);
         }
         return;
     }
