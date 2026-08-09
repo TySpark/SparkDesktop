@@ -73,6 +73,8 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+for /f "usebackq tokens=2 delims=,: " %%v in ("version.json") do set "PACKAGE_VERSION=%%~v"
+
 echo.
 echo === Release build complete ===
 echo SparkDesktop.exe:   %STAGE%\SparkDesktop.exe
@@ -80,6 +82,6 @@ echo Taskbar hook:     %STAGE%\SnowDesktopTaskbarHook.dll
 echo Updater:          %STAGE%\SparkDesktopUpdater.exe
 echo Widgets:          %STAGE%\widgets
 echo Languages:        %STAGE%\lang
-echo Portable zip + .sha256:  .build\SparkDesktop-portable-x64.zip
-echo The %STAGE%\ folder and the portable zip are git-ignored.
+echo Portable zip + .sha256:  %STAGE%\v%PACKAGE_VERSION%\SparkDesktop-portable-x64.zip
+echo The %STAGE%\ folder (including the versioned zip output) is git-ignored.
 exit /b 0

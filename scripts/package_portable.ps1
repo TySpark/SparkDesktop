@@ -15,9 +15,11 @@ if (-not (Test-Path -LiteralPath $stage -PathType Container)) {
 $version = (Get-Content (Join-Path $repoRoot "version.json") -Raw |
     ConvertFrom-Json).version
 # 自动更新已按内容校验，发行包文件名不再带版本号（避免每个版本都要
-# 重命名资产）；产物统一输出到 .build 构建目录，不污染仓库根。
+# 重命名资产）；产物统一输出到 release\v<版本>\，不污染仓库根。
 $zipName = "SparkDesktop-portable-x64.zip"
-$zipPath = Join-Path (Join-Path $repoRoot ".build") $zipName
+$versionDir = Join-Path $stage "v$version"
+New-Item -ItemType Directory -Path $versionDir -Force | Out-Null
+$zipPath = Join-Path $versionDir $zipName
 $shaPath = "$zipPath.sha256"
 
 if (Test-Path -LiteralPath $zipPath) {
@@ -27,9 +29,10 @@ if (Test-Path -LiteralPath $shaPath) {
     Remove-Item -LiteralPath $shaPath -Force
 }
 
-# Exclude the zip itself (it lives outside the stage, but be safe).
+# Package only the staged payload; exclude the version output directory so
+# the zip is never nested into itself.
 $items = @(Get-ChildItem -LiteralPath $stage -Force |
-    Where-Object { $_.Name -ne $zipName })
+    Where-Object { $_.Name -ne "v$version" })
 Compress-Archive -Path $items.FullName -DestinationPath $zipPath `
     -CompressionLevel Optimal -Force
 
