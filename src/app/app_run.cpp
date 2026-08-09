@@ -773,7 +773,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         if (waitResult == WAIT_FAILED)
             break;
         if (handleCount == 1 && waitResult == WAIT_OBJECT_0)
+        {
             uiAnimationScheduler_.DispatchDue();
+            // 动画帧后立即提交：否则动画期间渲染只标记 pending，
+            // surface 永不更新（快捷导航打开后内容不可见，鼠标移动
+            // 触发重绘才显示）。
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        }
 
         unsigned processedMessages = 0;
         while (processedMessages < 64 &&
@@ -793,6 +800,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     WAIT_OBJECT_0)
             {
                 uiAnimationScheduler_.DispatchDue();
+                FlushPendingCompositionCommit();
+                FlushPendingQuickNavigationCompositionCommit();
             }
         }
         if (settingsWindow_ && settingsWindow_->IsVisible() &&
