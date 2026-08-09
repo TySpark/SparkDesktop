@@ -3,8 +3,10 @@ setlocal
 cd /d "%~dp0.."
 
 REM Build an optimized Release of SnowDesktop and stage a clean, distributable
-REM folder under release\ (exe + hook DLL + docs + widgets + lang only; no
-REM intermediate build files). The release\ folder is git-ignored.
+REM folder under release\v<version>\ (exe + hook DLL + docs + widgets + lang
+REM only; no intermediate build files). Each version gets its own folder under
+REM release\; previous versions are left untouched. The release\ folder is
+REM git-ignored.
 
 REM -- Preflight: do not build while SnowDesktop is running --
 tasklist /fi "IMAGENAME eq SparkDesktop.exe" /nh 2>nul | find /i "SparkDesktop.exe" >nul
@@ -45,8 +47,13 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-REM -- Stage the distributable release folder --
-set "STAGE=release"
+REM -- Stage the distributable release folder under release\v<version> --
+for /f "usebackq tokens=2 delims=,: " %%v in ("version.json") do set "VERSION=%%~v"
+if not defined VERSION (
+    echo Cannot read the version from version.json.
+    exit /b 1
+)
+set "STAGE=release\v%VERSION%"
 if exist "%STAGE%" rmdir /s /q "%STAGE%"
 mkdir "%STAGE%\licenses" >nul
 
@@ -67,21 +74,20 @@ xcopy /e /i /y "lang" "%STAGE%\lang" >nul
 xcopy /e /i /y "skill" "%STAGE%\skill" >nul
 
 REM -- Package the portable zip and SHA256 checksum for the update feed --
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0package_portable.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0package_portable.ps1" -StageDir "%STAGE%"
 if %ERRORLEVEL% NEQ 0 (
     echo Package zip creation FAILED
     exit /b 1
 )
 
-for /f "usebackq tokens=2 delims=,: " %%v in ("version.json") do set "PACKAGE_VERSION=%%~v"
-
 echo.
 echo === Release build complete ===
+echo Staged release:    %STAGE%\
 echo SparkDesktop.exe:   %STAGE%\SparkDesktop.exe
 echo Taskbar hook:     %STAGE%\SnowDesktopTaskbarHook.dll
 echo Updater:          %STAGE%\SparkDesktopUpdater.exe
 echo Widgets:          %STAGE%\widgets
 echo Languages:        %STAGE%\lang
-echo Portable zip + .sha256:  %STAGE%\v%PACKAGE_VERSION%\SparkDesktop-portable-x64.zip
-echo The %STAGE%\ folder (including the versioned zip output) is git-ignored.
+echo Portable zip + .sha256:  %STAGE%\SparkDesktop-portable-x64.zip
+echo The release\ folder (including the versioned zip output) is git-ignored.
 exit /b 0
