@@ -120,10 +120,10 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             : 6.0f * app_->GetItemLayoutScale(rect);
         app_->DrawD2DRoundedRectangle(context, rect,
             radius,
-            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.06f * alpha)
-                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * alpha),
-            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * alpha)
-                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f * alpha));
+            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f * alpha)
+                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f * alpha),
+            lightTheme ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f * alpha)
+                       : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f * alpha));
     }
 
     RECT iconRect = quickNavLayout
@@ -138,10 +138,10 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             : 6.0f * app_->GetItemLayoutScale(rect);
         app_->DrawD2DRoundedRectangle(context, sel,
             radius,
-            lightTheme ? D2D1::ColorF(0.20f, 0.40f, 0.70f, 0.18f * alpha)
-                       : D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * alpha),
-            lightTheme ? D2D1::ColorF(0.25f, 0.50f, 0.80f, 0.40f * alpha)
-                       : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * alpha));
+            lightTheme ? D2D1::ColorF(0.20f, 0.40f, 0.70f, 0.26f * alpha)
+                       : D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.42f * alpha),
+            lightTheme ? D2D1::ColorF(0.25f, 0.50f, 0.80f, 0.50f * alpha)
+                       : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.65f * alpha));
     }
 
     if (item_->iconState == IconState::Loading)

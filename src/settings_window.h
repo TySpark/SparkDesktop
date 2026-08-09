@@ -18,6 +18,7 @@
 #include "general_settings.h"
 #include "personalization.h"
 #include "dock_settings.h"
+#include "http_runtime.h"
 #include "navigation_settings.h"
 #include "category_settings.h"
 #include "full_data_backup.h"
@@ -499,8 +500,9 @@ private:
 
     /**
      * @brief 执行在线更新检查（调用 GitHub API）
+     * @param fromRetry 由失败自动重试调用时为 true（不重置重试计数）
      */
-    void PerformUpdateCheck();
+    void PerformUpdateCheck(bool fromRetry = false);
 
     /**
      * @brief 轮询并应用后台更新检查结果
@@ -725,6 +727,14 @@ private:
     std::unique_ptr<AsyncHttpService> updateHttpService_;
     /// 当前更新检查请求 ID；0 表示没有进行中的请求
     int updateCheckRequestId_ = 0;
+    /// 更新检查自动重试次数（网络抖动时最多重试 1 次）
+    int updateCheckRetryCount_ = 0;
+    /// 当前更新检查源：0=Gitee（优先，国内直连），1=GitHub（回退）
+    int updateSourceIndex_ = 0;
+    /// 更新包下载进度共享状态（下载线程更新、UI 轮询显示）
+    std::shared_ptr<DownloadProgress> updateProgress_;
+    /// 更新包 zip 资产大小（字节），0 表示未知
+    long long updateZipSize_ = 0;
 
     /// MSIX StartupTask 状态是否已完成首次查询
     mutable bool packagedAutoStartStateKnown_ = false;

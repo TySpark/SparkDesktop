@@ -34,6 +34,20 @@ struct HttpRequestOptions
     bool allowAnyHttpOrHttpsUrl = false;
     // 非空时响应体流式写入该文件（替代内存缓冲），用于大文件下载。
     std::wstring bodyFilePath;
+    // 允许跟随 302 重定向（GitHub 资产下载会重定向到 CDN）。
+    bool allowRedirects = false;
+    // 跳过 DNS pinning（强制解析固定 IP）。CDN（如 GitHub 资产下载）
+    // 多节点且常与代理冲突，pinning 到单个 IP 会导致连接超时。
+    bool skipPinning = false;
+    // 可选的下载进度共享状态（发起方轮询显示进度）。
+    std::shared_ptr<struct DownloadProgress> progress;
+};
+
+/// 下载进度（线程安全共享计数器）。
+struct DownloadProgress
+{
+    std::atomic<long long> bytes{ 0 };
+    std::atomic<long long> total{ 0 };  // 0 表示未知
 };
 
 struct HttpResponse

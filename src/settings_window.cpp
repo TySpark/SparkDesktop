@@ -25,6 +25,18 @@
 #include "http_runtime.h"
 #include "portable_data_migration.h"
 
+// 诊断日志（utils.cpp 实现）；不 include utils.h 以避免与匿名命名空间
+// 的 Utf8ToWide/WideToUtf8 重载冲突。
+enum class DiagnosticLogLevel
+{
+    Debug,
+    Info,
+    Warning,
+    Error,
+};
+void WriteDiagnosticLogEntry(const wchar_t* message,
+    DiagnosticLogLevel level = DiagnosticLogLevel::Info);
+
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
@@ -4714,11 +4726,16 @@ void SettingsWindow::DrawDebugPage()
  * 显示应用简介、作者信息、社交主页链接（Bilibili / GitHub / 抖音 / 小红书）。
  * 版本号支持彩蛋点击 —— 连续点击 5 次可解锁调试页面（debugUnlocked_）。
  */
-void SettingsWindow::PerformUpdateCheck()
+void SettingsWindow::PerformUpdateCheck(bool fromRetry)
 {
     if (updateCheckRequestId_ != 0)
         return;
 
+    if (!fromRetry)
+    {
+        updateCheckRetryCount_ = 0;
+        updateSourceIndex_ = 0;  // 每次手动检查从 Gitee 开始
+    }
     updateCheckStatus_ = "checking";
     updateCheckStatusKey_.clear();
     updateCheckStatusArgument_.clear();
@@ -4754,14 +4771,31 @@ void SettingsWindow::PerformUpdateCheck()
 
     HttpRequestOptions options;
     options.widgetId = L"SparkDesktop.UpdateCheck";
-    options.url =
-        L"https://api.github.com/repos/TySpark/"
-        L"SparkDesktop/releases/latest";
-    options.headers =
-        L"Accept: application/vnd.github+json\r\n"
-        L"X-GitHub-Api-Version: 2022-11-28\r\n";
-    options.timeoutMs = 8000;
-    options.allowedDomains = { "api.github.com" };
+    if (updateSourceIndex_ == 0)
+    {
+        // Gitee 优先：国内直连，无需梯子。
+        options.url =
+            L"https://gitee.com/api/v5/repos/TySpark/"
+            L"SparkDesktop/releases?per_page=20";
+        options.timeoutMs = 10000;
+        options.allowedDomains = { "gitee.com" };
+        WriteDiagnosticLogEntry(
+            L"Update check: GET gitee releases");
+    }
+    else
+    {
+        // GitHub 回退：海外/梯子场景。
+        options.url =
+            L"https://api.github.com/repos/TySpark/"
+            L"SparkDesktop/releases?per_page=20";
+        options.headers =
+            L"Accept: application/vnd.github+json\r\n"
+            L"X-GitHub-Api-Version: 2022-11-28\r\n";
+        options.timeoutMs = 8000;
+        options.allowedDomains = { "api.github.com" };
+        WriteDiagnosticLogEntry(
+            L"Update check: GET github releases");
+    }
     updateCheckRequestId_ = updateHttpService_->Submit(std::move(options));
     if (updateCheckRequestId_ == 0)
     {
@@ -4774,6 +4808,26 @@ void SettingsWindow::PollUpdateCheck()
 {
     if (!updateHttpService_)
         return;
+
+    // ── 下载进度轮询 ──
+    if (updateDownloadRequestId_ != 0 && updateProgress_)
+    {
+        const long long bytes = updateProgress_->bytes.load();
+        long long total = updateProgress_->total.load();
+        if (total == 0)
+            total = updateZipSize_;
+        if (updateCheckStatusKey_ ==
+                L10N_KEY("app.settings.update_downloading") &&
+            bytes > 0 && total > 0)
+        {
+            const int percent = static_cast<int>(bytes * 100 / total);
+            updateCheckStatus_ = Locale::Instance().TrFormat(
+                "app.settings.update_downloading_progress",
+                { std::to_string(percent),
+                  std::to_string(bytes / (1024 * 1024)),
+                  std::to_string(total / (1024 * 1024)) });
+        }
+    }
 
     // ── SHA256 校验文件下载响应 ──
     if (updateSha256RequestId_ != 0)
@@ -4813,6 +4867,12 @@ void SettingsWindow::PollUpdateCheck()
             if (!response.error.empty() || response.status < 200 ||
                 response.status >= 300)
             {
+                const long long bytes = updateProgress_
+                    ? updateProgress_->bytes.load() : 0;
+                const std::string detail = "Update download failed: status=" +
+                    std::to_string(response.status) + " error=" +
+                    response.error + " bytes=" + std::to_string(bytes);
+                WriteDiagnosticLogEntry(Utf8ToWide(detail).c_str());
                 updateZipReady_ = false;
                 updateCheckStatusKey_ =
                     L10N_KEY("app.settings.update_download_failed");
@@ -4839,6 +4899,13 @@ void SettingsWindow::PollUpdateCheck()
                 }
             }
             updateZipReady_ = true;
+            {
+                const long long bytes = updateProgress_
+                    ? updateProgress_->bytes.load() : 0;
+                const std::string detail = "Update zip downloaded: " +
+                    std::to_string(bytes) + " bytes";
+                WriteDiagnosticLogEntry(Utf8ToWide(detail).c_str());
+            }
             updateCheckStatusKey_ =
                 L10N_KEY("app.settings.update_ready");
             updateCheckStatus_ =
@@ -4860,6 +4927,36 @@ void SettingsWindow::PollUpdateCheck()
         if (!response.error.empty() || response.status < 200 ||
             response.status >= 300)
         {
+            const std::string detail = "Update check failed: status=" +
+                std::to_string(response.status) + " error=" +
+                response.error;
+            WriteDiagnosticLogEntry(Utf8ToWide(detail).c_str());
+            // Gitee 优先：Gitee 失败（含限流/拒绝）自动回退 GitHub。
+            if (updateSourceIndex_ == 0)
+            {
+                updateSourceIndex_ = 1;
+                PerformUpdateCheck(true);
+                return;
+            }
+            // GitHub API 限流（429）或拒绝（403）：重试只会加剧限流，
+            // 直接提示稍后再试，不再自动重试。
+            if (response.status == 429 || response.status == 403)
+            {
+                updateCheckRetryCount_ = 0;
+                updateCheckStatusKey_ =
+                    L10N_KEY("app.settings.update_rate_limited");
+                updateCheckStatus_ =
+                    _L("app.settings.update_rate_limited");
+                return;
+            }
+            // 网络抖动时自动重试一次，避免偶发失败误报。
+            if (updateCheckRetryCount_ < 1)
+            {
+                ++updateCheckRetryCount_;
+                PerformUpdateCheck(true);
+                return;
+            }
+            updateCheckRetryCount_ = 0;
             if (response.error.find("WinHttpOpen") != std::string::npos)
                 updateCheckStatusKey_ =
                     L10N_KEY("app.settings.update_http_init_failed");
@@ -4888,28 +4985,6 @@ void SettingsWindow::PollUpdateCheck()
             return;
         }
 
-        auto extractJsonString = [](const std::string& json,
-                                     const char* field) -> std::string {
-            const std::string key = "\"" + std::string(field) + "\"";
-            size_t pos = json.find(key);
-            if (pos == std::string::npos) return {};
-            pos += key.size();
-            pos = json.find(':', pos);
-            if (pos == std::string::npos) return {};
-            ++pos;
-            while (pos < json.size() &&
-                (json[pos] == ' ' || json[pos] == '\t' ||
-                 json[pos] == '\r' || json[pos] == '\n'))
-                ++pos;
-            if (pos >= json.size() || json[pos] != '"') return {};
-            ++pos;
-            size_t end = json.find('"', pos);
-            if (end == std::string::npos) return {};
-            return json.substr(pos, end - pos);
-        };
-
-        // 在 releases/latest 的 assets[] 中按资产名后缀精确查找
-        // browser_download_url（.zip 便携包 / .sha256 校验文件）。
         auto extractAssetUrlBySuffix = [](const std::string& json,
             const char* nameSuffix) -> std::string {
             const std::string needle = "\"name\":\"";
@@ -4924,42 +4999,35 @@ void SettingsWindow::PollUpdateCheck()
                     json.compare(nameEnd - suffixLen, suffixLen,
                         nameSuffix) == 0)
                 {
-                    const size_t urlKey = json.find(
-                        "\"browser_download_url\":\"", nameEnd);
-                    if (urlKey == std::string::npos) return {};
-                    const size_t urlStart =
-                        urlKey + std::strlen("\"browser_download_url\":\"");
-                    const size_t urlEnd = json.find('"', urlStart);
+                    // GitHub 用 browser_download_url，Gitee 用 download_url。
+                    const char* field1 = "\"browser_download_url\":\"";
+                    const char* field2 = "\"download_url\":\"";
+                    const size_t urlKey1 = json.find(field1, nameEnd);
+                    const size_t urlKey2 = json.find(field2, nameEnd);
+                    size_t urlValueStart = std::string::npos;
+                    if (urlKey1 != std::string::npos &&
+                        (urlKey2 == std::string::npos || urlKey1 <= urlKey2))
+                    {
+                        urlValueStart = urlKey1 + std::strlen(field1);
+                    }
+                    else if (urlKey2 != std::string::npos)
+                    {
+                        urlValueStart = urlKey2 + std::strlen(field2);
+                    }
+                    if (urlValueStart == std::string::npos) return {};
+                    const size_t urlEnd = json.find('"', urlValueStart);
                     if (urlEnd == std::string::npos) return {};
-                    return json.substr(urlStart, urlEnd - urlStart);
+                    return json.substr(urlValueStart,
+                        urlEnd - urlValueStart);
                 }
                 pos = nameEnd;
             }
             return {};
         };
 
-        std::string tag =
-            extractJsonString(response.body, "tag_name");
-        if (tag.empty())
-        {
-            updateCheckStatusKey_ =
-                L10N_KEY("app.settings.update_parse_failed");
-            updateCheckStatus_ =
-                _L("app.settings.update_parse_failed");
-            return;
-        }
-
-        if (tag[0] == 'v' || tag[0] == 'V')
-            tag.erase(0, 1);
-
-        const std::string htmlUrl =
-            extractJsonString(response.body, "html_url");
-        // 便携更新包与校验文件资产直链（发布时附带这两个资产）。
-        updateZipUrl_ = extractAssetUrlBySuffix(
-            response.body, ".zip");
-        updateSha256Url_ = extractAssetUrlBySuffix(
-            response.body, ".sha256");
-
+                // /releases 返回 JSON 数组（按发布时间降序）。GitHub 的
+        // releases/latest 按发布时间而非版本号选"最新"，发布过旧版本
+        // 的 Release 后会误判；这里遍历全部条目取版本号最大的。
         auto compareVersion = [](const std::string& a,
                                   const std::string& b) -> int {
             std::istringstream sa(a), sb(b);
@@ -4974,10 +5042,97 @@ void SettingsWindow::PollUpdateCheck()
             return 0;
         };
 
-        latestVersion_ = tag;
-        downloadUrl_ = htmlUrl;
+        std::string bestTag, bestBlock;
+        const std::string tagNeedle = "\"tag_name\":\"";
+        size_t scan = 0;
+        while ((scan = response.body.find(tagNeedle, scan)) !=
+            std::string::npos)
+        {
+            const size_t tagStart = scan + tagNeedle.size();
+            const size_t tagEnd = response.body.find('"', tagStart);
+            if (tagEnd == std::string::npos) break;
+            std::string tag = response.body.substr(tagStart,
+                tagEnd - tagStart);
+            if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V'))
+                tag.erase(0, 1);
+            const size_t nextTag = response.body.find(tagNeedle, tagEnd);
+            const size_t blockEnd = nextTag == std::string::npos
+                ? response.body.size() : nextTag;
+            const std::string block =
+                response.body.substr(scan, blockEnd - scan);
+            if (bestTag.empty() || compareVersion(tag, bestTag) > 0)
+            {
+                bestTag = tag;
+                bestBlock = block;
+            }
+            scan = tagEnd;
+        }
 
-        if (compareVersion(SNOWDESKTOP_VERSION, tag) >= 0)
+        if (bestBlock.empty())
+        {
+            updateCheckStatusKey_ =
+                L10N_KEY("app.settings.update_parse_failed");
+            updateCheckStatus_ =
+                _L("app.settings.update_parse_failed");
+            return;
+        }
+
+        // 便携更新包与校验文件资产直链（发布时附带这两个资产）。
+        updateZipUrl_ = extractAssetUrlBySuffix(
+            bestBlock, ".zip");
+        updateSha256Url_ = extractAssetUrlBySuffix(
+            bestBlock, ".sha256");
+        // 提取 zip 资产大小（字节），用于下载进度总大小展示。
+        updateZipSize_ = 0;
+        {
+            const std::string needle = "\"name\":\"";
+            const char* nameSuffix = ".zip";
+            const size_t suffixLen = std::strlen(nameSuffix);
+            size_t pos = 0;
+            while ((pos = bestBlock.find(needle, pos)) != std::string::npos)
+            {
+                const size_t nameStart = pos + needle.size();
+                const size_t nameEnd = bestBlock.find('"', nameStart);
+                if (nameEnd == std::string::npos) break;
+                if (nameEnd - nameStart >= suffixLen &&
+                    bestBlock.compare(nameEnd - suffixLen, suffixLen,
+                        nameSuffix) == 0)
+                {
+                    const size_t sizeKey = bestBlock.find("\"size\":", nameEnd);
+                    if (sizeKey != std::string::npos)
+                    {
+                        size_t numStart = sizeKey + 7;
+                        while (numStart < bestBlock.size() &&
+                            (bestBlock[numStart] == ' ' ||
+                             bestBlock[numStart] == '\t'))
+                            ++numStart;
+                        size_t numEnd = numStart;
+                        while (numEnd < bestBlock.size() &&
+                            bestBlock[numEnd] >= '0' &&
+                            bestBlock[numEnd] <= '9')
+                            ++numEnd;
+                        if (numEnd > numStart)
+                            updateZipSize_ = std::atoll(
+                                bestBlock.substr(numStart,
+                                    numEnd - numStart).c_str());
+                    }
+                    break;
+                }
+                pos = nameEnd;
+            }
+        }
+        downloadUrl_ =
+            "https://github.com/TySpark/SparkDesktop/releases/tag/v" +
+            bestTag;
+
+        latestVersion_ = bestTag;
+        {
+            const std::string detail = "Update check ok: latest=" +
+                bestTag + " zipSize=" + std::to_string(updateZipSize_);
+            WriteDiagnosticLogEntry(Utf8ToWide(detail).c_str());
+        }
+
+        if (compareVersion(SNOWDESKTOP_VERSION, bestTag) >= 0)
         {
             updateAvailable_ = false;
             updateCheckStatusKey_ =
@@ -4991,9 +5146,9 @@ void SettingsWindow::PollUpdateCheck()
             updateAvailable_ = true;
             updateCheckStatusKey_ =
                 L10N_KEY("app.settings.new_version");
-            updateCheckStatusArgument_ = tag;
+            updateCheckStatusArgument_ = bestTag;
             updateCheckStatus_ =
-                _LF("app.settings.new_version", tag);
+                _LF("app.settings.new_version", bestTag);
         }
         return;
     }
@@ -5022,8 +5177,14 @@ void SettingsWindow::StartUpdateDownload()
         options.url = Utf8ToWide(updateSha256Url_);
         options.timeoutMs = 15000;
         options.allowedDomains = {
-            "github.com", "objects.githubusercontent.com",
+            "gitee.com",
+            "foruda.gitee.com",
+            "github.com",
+            "release-assets.githubusercontent.com",
+            "objects.githubusercontent.com",
         };
+        options.allowRedirects = true;
+        options.skipPinning = true;
         updateSha256RequestId_ =
             updateHttpService_->Submit(std::move(options));
         if (updateSha256RequestId_ == 0)
@@ -5038,19 +5199,33 @@ void SettingsWindow::StartUpdateZipDownload()
 {
     if (updateZipUrl_.empty())
         return;
-    const std::wstring updatesDir = GetDataFilePath(L"updates");
-    CreateDirectoryW(updatesDir.c_str(), nullptr);
+    const std::wstring updatesDir =
+        GetDataSubdirectoryPath(L"updates");
     updateZipPath_ =
-        GetDataFilePath(L"updates\\SparkDesktop-update.zip");
+        updatesDir + L"\\SparkDesktop-update.zip";
     DeleteFileW(updateZipPath_.c_str());
+    {
+        const std::wstring log =
+            L"Update download target: " + updateZipPath_;
+        WriteDiagnosticLogEntry(log.c_str());
+    }
 
     HttpRequestOptions options;
     options.widgetId = L"SparkDesktop.UpdateCheck";
     options.url = Utf8ToWide(updateZipUrl_);
     options.timeoutMs = 120000;
     options.allowedDomains = {
-        "github.com", "objects.githubusercontent.com",
+        "github.com",
+        "release-assets.githubusercontent.com",
+        "objects.githubusercontent.com",
     };
+    options.allowRedirects = true;
+    options.skipPinning = true;
+    if (!updateProgress_)
+        updateProgress_ = std::make_shared<DownloadProgress>();
+    updateProgress_->bytes.store(0);
+    updateProgress_->total.store(0);
+    options.progress = updateProgress_;
     options.bodyFilePath = updateZipPath_;
     updateDownloadRequestId_ =
         updateHttpService_->Submit(std::move(options));
@@ -5071,7 +5246,7 @@ void SettingsWindow::ApplyUpdateAndRestart()
     // updater 位于安装目录（与主程序同目录）。
     const std::wstring installDir = GetExecutableDirectoryPath();
     const std::wstring updaterPath =
-        installDir + L"SparkDesktopUpdater.exe";
+        installDir + L"\\SparkDesktopUpdater.exe";
     if (GetFileAttributesW(updaterPath.c_str()) ==
         INVALID_FILE_ATTRIBUTES)
     {

@@ -114,6 +114,8 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
         std::to_wstring(GetCurrentProcessId());
     const std::wstring extractDir = workRoot + L"\\extract";
     DeleteDirectoryTree(workRoot);
+    if (!CreateDirectoryW(workRoot.c_str(), nullptr))
+        return 3;
     if (!CreateDirectoryW(extractDir.c_str(), nullptr))
         return 3;
 

@@ -15,6 +15,37 @@ namespace
 {
 constexpr DWORD kMaxResponseBytes = 1024 * 1024;
 
+/// 读取系统（IE/WinINet）代理设置：注册表 ProxyEnable + ProxyServer。
+/// 梯子"代理模式"通常只设置这里的系统代理（浏览器走它），而
+/// WinHTTP 的 DEFAULT_PROXY 读不到，导致程序请求实际直连。返回空表示
+/// 未启用代理。
+std::wstring ReadSystemProxyConfig()
+{
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\"
+            L"Internet Settings",
+            0, KEY_READ, &key) != ERROR_SUCCESS)
+    {
+        return {};
+    }
+    DWORD enable = 0;
+    DWORD enableSize = sizeof(enable);
+    const LSTATUS enableResult = RegQueryValueExW(key, L"ProxyEnable",
+        nullptr, nullptr, reinterpret_cast<BYTE*>(&enable), &enableSize);
+    wchar_t server[512]{};
+    DWORD serverSize = sizeof(server);
+    const LSTATUS serverResult = RegQueryValueExW(key, L"ProxyServer",
+        nullptr, nullptr, reinterpret_cast<BYTE*>(server), &serverSize);
+    RegCloseKey(key);
+    if (enableResult != ERROR_SUCCESS || enable == 0 ||
+        serverResult != ERROR_SUCCESS || server[0] == L'\0')
+    {
+        return {};
+    }
+    return std::wstring(server);
+}
+
 bool IsBlockedIpv4(const IN_ADDR& address)
 {
     const std::uint32_t value = ntohl(address.S_un.S_addr);
@@ -387,14 +418,29 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     response.id = id;
     response.widgetId = options.widgetId;
 
-    HINTERNET session = WinHttpOpen(L"SparkDesktop/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-        WINHTTP_NO_PROXY_NAME,
-        WINHTTP_NO_PROXY_BYPASS, 0);
+    // 优先使用系统（IE/WinINet）代理，与浏览器行为一致；梯子的
+    // "代理模式"只设置系统代理，WinHTTP 的 DEFAULT_PROXY 读不到它。
+    const std::wstring systemProxy = ReadSystemProxyConfig();
+    HINTERNET session = nullptr;
+    if (!systemProxy.empty())
+    {
+        session = WinHttpOpen(L"SparkDesktop/1.0",
+            WINHTTP_ACCESS_TYPE_NAMED_PROXY, systemProxy.c_str(),
+            WINHTTP_NO_PROXY_BYPASS, 0);
+    }
+    else
+    {
+        session = WinHttpOpen(L"SparkDesktop/1.0",
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+            WINHTTP_NO_PROXY_NAME,
+            WINHTTP_NO_PROXY_BYPASS, 0);
+    }
     if (!session) { response.error = "WinHttpOpen failed"; return response; }
     WinHttpSetTimeouts(session, options.timeoutMs, options.timeoutMs,
         options.timeoutMs, options.timeoutMs);
-    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    DWORD redirectPolicy = options.allowRedirects
+        ? WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP
+        : WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
     WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY,
         &redirectPolicy, sizeof(redirectPolicy));
 
@@ -406,7 +452,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             FILE_ATTRIBUTE_NORMAL, nullptr);
         if (downloadFile == INVALID_HANDLE_VALUE)
         {
-            response.error = "Cannot create download file";
+            response.error = "Cannot create download file, Win32=" +
+                std::to_string(GetLastError());
             WinHttpCloseHandle(session);
             return response;
         }
@@ -441,6 +488,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         const std::wstring currentHost(host, components.dwHostNameLength);
         std::wstring pinnedAddress;
         if (!options.allowAnyHttpOrHttpsUrl &&
+            !options.skipPinning &&
+            systemProxy.empty() &&
             !ResolvePinnedPublicAddress(currentHost, pinnedAddress))
         {
             response.error =
@@ -493,14 +542,23 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             options.headers.empty() ? 0 : static_cast<DWORD>(-1L),
             options.body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(options.body.data()),
             static_cast<DWORD>(options.body.size()), static_cast<DWORD>(options.body.size()), 0);
-        if (!sent || !WinHttpReceiveResponse(request, nullptr))
+        if (!sent)
         {
-            response.error = "HTTP request failed";
+            response.error = "SendRequest failed, Win32=" +
+                std::to_string(GetLastError());
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
         }
-        if (!options.allowAnyHttpOrHttpsUrl)
+        if (!WinHttpReceiveResponse(request, nullptr))
+        {
+            response.error = "ReceiveResponse failed, Win32=" +
+                std::to_string(GetLastError());
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+        if (!options.allowAnyHttpOrHttpsUrl && systemProxy.empty())
         {
             WINHTTP_CONNECTION_INFO connectionInfo{};
             connectionInfo.cbSize = sizeof(connectionInfo);
@@ -560,16 +618,47 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             continue;
         }
 
+        if (options.progress && options.progress->total.load() == 0)
+        {
+            DWORD contentLength = 0;
+            DWORD contentLengthSize = sizeof(contentLength);
+            if (WinHttpQueryHeaders(request,
+                WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX, &contentLength,
+                &contentLengthSize, WINHTTP_NO_HEADER_INDEX))
+            {
+                options.progress->total.store(contentLength);
+            }
+        }
         while (!token.stop_requested())
         {
             if (options.bodyFilePath.empty() &&
                 response.body.size() > kMaxResponseBytes)
                 break;
             DWORD available = 0;
-            if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+            if (!WinHttpQueryDataAvailable(request, &available))
+            {
+                if (response.error.empty())
+                    response.error = "QueryDataAvailable failed, Win32=" +
+                        std::to_string(GetLastError());
+                break;
+            }
+            if (available == 0)
+            {
+                // 同步模式下 available=0 表示响应体已全部读完，正常结束；
+                // 连接若真挂起，WinHttp 接收超时会在 QueryDataAvailable
+                // 内部阻塞超时后返回 FALSE，不会卡在这里。
+                break;
+            }
             std::string chunk(available, '\0');
             DWORD read = 0;
-            if (!WinHttpReadData(request, chunk.data(), available, &read)) break;
+            if (!WinHttpReadData(request, chunk.data(), available, &read))
+            {
+                if (response.error.empty())
+                    response.error = "ReadData failed, Win32=" +
+                        std::to_string(GetLastError());
+                break;
+            }
             if (!options.bodyFilePath.empty())
             {
                 DWORD written = 0;
@@ -578,6 +667,8 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
                     response.error = "Download write failed";
                     break;
                 }
+                if (options.progress)
+                    options.progress->bytes.fetch_add(written);
             }
             else
             {

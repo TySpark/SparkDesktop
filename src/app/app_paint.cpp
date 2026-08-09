@@ -136,5 +136,13 @@ void DesktopApp::OnPaint(const RECT* updateRect)
                 L"Queue Paint Commit", E_FAIL);
             return;
         }
+        // 立即提交：动画调度只在交互/动画时 Flush，静态桌面（无交互）的
+        // 首次渲染会一直停留在 pending，导致 surface 永不更新、图标不可见。
+        if (!FlushPendingCompositionCommit())
+        {
+            RecoverCompositionRenderFailure(
+                L"Paint Commit Flush", E_FAIL);
+            return;
+        }
         compositionRenderRecoveryPending_ = false;
     }
