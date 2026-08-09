@@ -43,10 +43,10 @@
 
 ## 构建与验证
 
-- Release 构建的标准验证入口是 `scripts/build_release.bat`（优化构建 + 打包发布目录与便携 zip）。
-- 在报告构建通过前，必须实际运行 `scripts/build_release.bat` 并确认 `release\v<版本>\SparkDesktop.exe` 成功生成
-  （同时包含 `SparkDesktopUpdater.exe`、`SnowDesktopTaskbarHook.dll`、`widgets/`、`lang/`、`skill/`）。
-- 每个版本的发布内容与便携 zip 统一放入 `release\v<版本>\`，构建只重建当前版本目录，不清理其他版本目录。
+- Release 构建的标准验证入口是 `scripts/build_release.bat`（优化构建 + 打包便携 zip 存档）。
+- 在报告构建通过前，必须实际运行 `scripts/build_release.bat` 并确认 `release\v<版本>\SparkDesktop-portable-x64.zip` 成功生成
+  （zip 内包含 `SparkDesktop.exe`、`SparkDesktopUpdater.exe`、`SnowDesktopTaskbarHook.dll`、`widgets/`、`lang/`、`skill/`）。
+- 每个版本在 `release\v<版本>\` 下只保存便携 zip 与同名 `.sha256` 存档，构建只重建当前版本目录，不清理其他版本目录。
 - `scripts/build_release.bat` 默认不得终止 SparkDesktop 或 Explorer。若应用或 Hook DLL 被占用，Agent 可在
   执行前明确提醒将终止 SparkDesktop 并短暂重启 Explorer，随后直接使用 `--reload-shell`，无需等待
   用户再次确认。

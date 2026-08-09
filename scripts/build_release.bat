@@ -2,11 +2,11 @@
 setlocal
 cd /d "%~dp0.."
 
-REM Build an optimized Release of SnowDesktop and stage a clean, distributable
-REM folder under release\v<version>\ (exe + hook DLL + docs + widgets + lang
-REM only; no intermediate build files). Each version gets its own folder under
-REM release\; previous versions are left untouched. The release\ folder is
-REM git-ignored.
+REM Build an optimized Release of SnowDesktop, stage a clean distributable
+REM payload into a temporary folder, and pack it into a portable zip archive.
+REM Only the zip (+ .sha256) is kept under release\v<version>\ as a local
+REM archive; each version gets its own folder and older ones are untouched.
+REM The release\ folder is git-ignored.
 
 REM -- Preflight: do not build while SnowDesktop is running --
 tasklist /fi "IMAGENAME eq SparkDesktop.exe" /nh 2>nul | find /i "SparkDesktop.exe" >nul
@@ -47,13 +47,13 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-REM -- Stage the distributable release folder under release\v<version> --
+REM -- Stage the distributable payload into a temporary folder --
 for /f "usebackq tokens=2 delims=,: " %%v in ("version.json") do set "VERSION=%%~v"
 if not defined VERSION (
     echo Cannot read the version from version.json.
     exit /b 1
 )
-set "STAGE=release\v%VERSION%"
+set "STAGE=.build\release-stage"
 if exist "%STAGE%" rmdir /s /q "%STAGE%"
 mkdir "%STAGE%\licenses" >nul
 
@@ -73,7 +73,7 @@ xcopy /e /i /y "widgets" "%STAGE%\widgets" >nul
 xcopy /e /i /y "lang" "%STAGE%\lang" >nul
 xcopy /e /i /y "skill" "%STAGE%\skill" >nul
 
-REM -- Package the portable zip and SHA256 checksum for the update feed --
+REM -- Package the portable zip into release\v<version>; payload is dropped --
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0package_portable.ps1" -StageDir "%STAGE%"
 if %ERRORLEVEL% NEQ 0 (
     echo Package zip creation FAILED
@@ -82,12 +82,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Release build complete ===
-echo Staged release:    %STAGE%\
-echo SparkDesktop.exe:   %STAGE%\SparkDesktop.exe
-echo Taskbar hook:     %STAGE%\SnowDesktopTaskbarHook.dll
-echo Updater:          %STAGE%\SparkDesktopUpdater.exe
-echo Widgets:          %STAGE%\widgets
-echo Languages:        %STAGE%\lang
-echo Portable zip + .sha256:  %STAGE%\SparkDesktop-portable-x64.zip
-echo The release\ folder (including the versioned zip output) is git-ignored.
+echo Archive:  release\v%VERSION%\SparkDesktop-portable-x64.zip (+ .sha256)
+echo The zip contains SparkDesktop.exe, SnowDesktopTaskbarHook.dll, SparkDesktopUpdater.exe, widgets\, lang\, skill\.
+echo The release\ folder (versioned zip archives) is git-ignored.
 exit /b 0
