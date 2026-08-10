@@ -1547,6 +1547,30 @@ static int lua_SystemGpu(lua_State* L)
     return 1;
 }
 
+static int lua_SystemDisk(lua_State* L)
+{
+    if (!RequirePermission(L, "system.read")) return 0;
+    auto* s = GetD2D(L);
+    DiskSnapshot snapshot = s && s->engine
+        ? s->engine->RuntimeGetDiskSnapshot(BoundWidgetId(L)) : DiskSnapshot{};
+    lua_createtable(L, 0, 2);
+    SetBooleanField(L, "available", snapshot.available);
+    lua_createtable(L, 0, static_cast<int>(snapshot.volumes.size()));
+    for (size_t i = 0; i < snapshot.volumes.size(); ++i)
+    {
+        const auto& volume = snapshot.volumes[i];
+        lua_createtable(L, 0, 5);
+        lua_pushstring(L, volume.name.c_str()); lua_setfield(L, -2, "name");
+        SetNumberField(L, "totalBytes", static_cast<lua_Number>(volume.totalBytes));
+        SetNumberField(L, "usedBytes", static_cast<lua_Number>(volume.usedBytes));
+        SetNumberField(L, "freeBytes", static_cast<lua_Number>(volume.freeBytes));
+        SetNumberField(L, "usagePercent", volume.usagePercent);
+        lua_rawseti(L, -2, static_cast<int>(i) + 1);
+    }
+    lua_setfield(L, -2, "volumes");
+    return 1;
+}
+
 static int lua_MediaCurrent(lua_State* L)
 {
     if (!RequirePermission(L, "media.read")) return 0;
@@ -5576,6 +5600,23 @@ GpuSnapshot WidgetEngine::RuntimeGetGpuSnapshot(const std::wstring& widgetId)
     return systemSnapshotService_ ? systemSnapshotService_->GetGpu() : GpuSnapshot{};
 }
 
+DiskSnapshot WidgetEngine::RuntimeGetDiskSnapshot(const std::wstring& widgetId)
+{
+    if (g_widgetDryLoad || IsPreviewWidget(widgetId))
+    {
+        DiskSnapshot preview;
+        preview.available = true;
+        preview.volumes.push_back({ "C:", 512ull * 1024 * 1024 * 1024,
+            210ull * 1024 * 1024 * 1024,
+            302ull * 1024 * 1024 * 1024, 41.0 });
+        return preview;
+    }
+    EnsureSystemSnapshotServiceStarted();
+    if (int index = FindWidget(widgetId); index >= 0)
+        widgets_[index].usesSystemSnapshot = true;
+    return systemSnapshotService_ ? systemSnapshotService_->GetDisk() : DiskSnapshot{};
+}
+
 MediaSnapshot WidgetEngine::RuntimeGetMediaSnapshot(const std::wstring& widgetId)
 {
     if (g_widgetDryLoad || IsPreviewWidget(widgetId))
@@ -8236,6 +8277,7 @@ void WidgetEngine::RegisterDrawAPI(lua_State* L)
     lua_pushcfunction(L, lua_SystemBattery); lua_setfield(L, -2, "battery");
     lua_pushcfunction(L, lua_SystemNetwork); lua_setfield(L, -2, "network");
     lua_pushcfunction(L, lua_SystemGpu); lua_setfield(L, -2, "gpu");
+    lua_pushcfunction(L, lua_SystemDisk); lua_setfield(L, -2, "disk");
     lua_setglobal(L, "sys");
 
     lua_newtable(L);

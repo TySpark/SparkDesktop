@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 struct CpuSnapshot
 {
@@ -41,6 +42,21 @@ struct BatterySnapshot
     bool charging = false;
     bool pluggedIn = false;
     bool saver = false;
+};
+
+struct DiskVolumeSnapshot
+{
+    std::string name;
+    std::uint64_t totalBytes = 0;
+    std::uint64_t usedBytes = 0;
+    std::uint64_t freeBytes = 0;
+    double usagePercent = 0.0;
+};
+
+struct DiskSnapshot
+{
+    bool available = false;
+    std::vector<DiskVolumeSnapshot> volumes;
 };
 
 struct NetworkSnapshot
@@ -82,6 +98,7 @@ public:
     GpuSnapshot GetGpu() const;
     BatterySnapshot GetBattery() const;
     NetworkSnapshot GetNetwork() const;
+    DiskSnapshot GetDisk() const;
     MediaSnapshot GetMedia() const;
 
     bool RequestMediaPlayPause();
@@ -104,6 +121,7 @@ private:
     GpuSnapshot gpu_;
     BatterySnapshot battery_;
     NetworkSnapshot network_;
+    DiskSnapshot disk_;
     MediaSnapshot media_;
     std::string systemError_;
     std::string mediaError_;

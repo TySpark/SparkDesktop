@@ -371,6 +371,9 @@ local network = sys.network()
 -- receivedBytes, sentBytes
 local gpu = sys.gpu()
 -- available, name, usagePercent, vramTotalBytes, vramUsedBytes
+local disk = sys.disk()
+-- available, volumes = { name, totalBytes, usedBytes, freeBytes,
+-- usagePercent } -- one entry per fixed local volume, e.g. "C:"
 ```
 
 Media requires `media.read`; controls require `media.action`:

@@ -68,6 +68,21 @@ bool NetworkEqual(const NetworkSnapshot& a, const NetworkSnapshot& b)
         a.uploadBytesPerSec == b.uploadBytesPerSec &&
         a.receivedBytes == b.receivedBytes && a.sentBytes == b.sentBytes;
 }
+
+bool DiskEqual(const DiskSnapshot& a, const DiskSnapshot& b)
+{
+    if (a.available != b.available || a.volumes.size() != b.volumes.size())
+        return false;
+    for (size_t i = 0; i < a.volumes.size(); ++i)
+    {
+        const auto& va = a.volumes[i];
+        const auto& vb = b.volumes[i];
+        if (va.name != vb.name || va.totalBytes != vb.totalBytes ||
+            va.usedBytes != vb.usedBytes || va.freeBytes != vb.freeBytes)
+            return false;
+    }
+    return true;
+}
 }
 
 SystemSnapshotService::~SystemSnapshotService()
@@ -209,6 +224,7 @@ MemorySnapshot SystemSnapshotService::GetMemory() const { std::scoped_lock lock(
 GpuSnapshot SystemSnapshotService::GetGpu() const { std::scoped_lock lock(mutex_); return gpu_; }
 BatterySnapshot SystemSnapshotService::GetBattery() const { std::scoped_lock lock(mutex_); return battery_; }
 NetworkSnapshot SystemSnapshotService::GetNetwork() const { std::scoped_lock lock(mutex_); return network_; }
+DiskSnapshot SystemSnapshotService::GetDisk() const { std::scoped_lock lock(mutex_); return disk_; }
 MediaSnapshot SystemSnapshotService::GetMedia() const { std::scoped_lock lock(mutex_); return media_; }
 std::string SystemSnapshotService::GetLastError() const
 {
@@ -447,17 +463,61 @@ bool SystemSnapshotService::SampleSystem()
                 gpu.vramUsedBytes = memBytes;
         }
 
+    DiskSnapshot disk;
+    {
+        wchar_t drives[512]{};
+        const DWORD driveLen = GetLogicalDriveStringsW(512, drives);
+        if (driveLen > 0 && driveLen < 512)
+        {
+            for (wchar_t* drive = drives; *drive; drive += wcslen(drive) + 1)
+            {
+                if (GetDriveTypeW(drive) != DRIVE_FIXED) continue;
+                ULARGE_INTEGER totalBytes{};
+                ULARGE_INTEGER freeBytes{};
+                if (!GetDiskFreeSpaceExW(drive, &freeBytes, &totalBytes, nullptr))
+                    continue;
+                if (totalBytes.QuadPart == 0) continue;
+
+                DiskVolumeSnapshot volume;
+                std::wstring root(drive);
+                int nameLen = WideCharToMultiByte(CP_UTF8, 0, root.c_str(),
+                    static_cast<int>(root.size()), nullptr, 0, nullptr, nullptr);
+                if (nameLen > 0)
+                {
+                    volume.name.resize(nameLen);
+                    WideCharToMultiByte(CP_UTF8, 0, root.c_str(),
+                        static_cast<int>(root.size()), &volume.name[0], nameLen,
+                        nullptr, nullptr);
+                    if (!volume.name.empty() && volume.name.back() == '\\')
+                        volume.name.pop_back();
+                }
+                volume.totalBytes = totalBytes.QuadPart;
+                volume.freeBytes = freeBytes.QuadPart;
+                volume.usedBytes = totalBytes.QuadPart - freeBytes.QuadPart;
+                volume.usagePercent = 100.0 * static_cast<double>(volume.usedBytes) /
+                    static_cast<double>(totalBytes.QuadPart);
+                disk.available = true;
+                disk.volumes.push_back(std::move(volume));
+            }
+        }
+        else
+        {
+            addError("Disk sampling failed.");
+        }
+    }
+
     bool changed = false;
     {
         std::scoped_lock lock(mutex_);
         changed = !CpuEqual(cpu_, cpu) || !MemoryEqual(memory_, memory) ||
             !GpuEqual(gpu_, gpu) || !BatteryEqual(battery_, battery) ||
-            !NetworkEqual(network_, network);
+            !NetworkEqual(network_, network) || !DiskEqual(disk_, disk);
         cpu_ = cpu;
         memory_ = memory;
         gpu_ = gpu;
         battery_ = battery;
         network_ = network;
+        disk_ = disk;
     }
     SetSystemError(errors);
     return changed;

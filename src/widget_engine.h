@@ -845,6 +845,7 @@ public:
     BatterySnapshot RuntimeGetBatterySnapshot(const std::wstring& widgetId);
     NetworkSnapshot RuntimeGetNetworkSnapshot(const std::wstring& widgetId);
     GpuSnapshot RuntimeGetGpuSnapshot(const std::wstring& widgetId);
+    DiskSnapshot RuntimeGetDiskSnapshot(const std::wstring& widgetId);
     MediaSnapshot RuntimeGetMediaSnapshot(const std::wstring& widgetId);
     bool RuntimeMediaPlayPause();
     bool RuntimeMediaNext();

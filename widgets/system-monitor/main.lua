@@ -58,12 +58,8 @@ end
 
 settings = {
     fields = {
-        { key = "show_cpu", label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = true },
-        { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = true },
-        { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = true },
-        { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = true },
-        { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = true },
-        { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = true },
+        { key = "card_style", label = l10n.tr("lua_widget.system_monitor.card_style"), type = "select", default = "bar",
+          options = { "bar", "ring", "gauge" } },
     }
 }
 
@@ -83,8 +79,66 @@ local function formatRate(bytes)
     return tostring(math.floor(bytes or 0)) .. " B/s"
 end
 
+-- Draws a progress arc from line segments; angles are radians, 0 points right,
+-- positive sweeps go clockwise (pomodoro-style radial tick technique).
+local function drawArcSegments(cx, cy, r, thickness, startAngle, sweepAngle, color, alpha)
+    if sweepAngle <= 0 then return end
+    local innerR = r - thickness / 2
+    local outerR = r + thickness / 2
+    local step = 2 * math.pi / math.max(180, math.floor(3 * math.pi * r))
+    local a = startAngle
+    while a < startAngle + sweepAngle do
+        draw.line(
+            cx + math.cos(a) * innerR,
+            cy + math.sin(a) * innerR,
+            cx + math.cos(a) * outerR,
+            cy + math.sin(a) * outerR,
+            thickness, color, alpha)
+        a = a + step
+    end
+end
+
 local function showCard(name)
     return storage.get("show_" .. name) ~= "0"
+end
+
+local defaultCardOrder = { "cpu", "memory", "gpu", "vram", "disk", "network", "battery" }
+
+local cardLabels = {
+    cpu = "CPU",
+    memory = l10n.tr("lua_widget.system_monitor.memory"),
+    gpu = "GPU",
+    vram = l10n.tr("lua_widget.system_monitor.vram"),
+    disk = l10n.tr("lua_widget.system_monitor.disk"),
+    network = l10n.tr("lua_widget.system_monitor.network"),
+    battery = l10n.tr("lua_widget.system_monitor.battery"),
+}
+
+-- Parses the persisted card order (comma separated) and completes it with any
+-- missing cards, so unknown or stale entries never break the layout.
+local function getCardOrder()
+    local raw = storage.get("card_order")
+    if not raw or raw == "" then return defaultCardOrder end
+    local seen = {}
+    local order = {}
+    for token in string.gmatch(raw, "[^,]+") do
+        if not seen[token] and cardLabels[token] then
+            seen[token] = true
+            order[#order + 1] = token
+        end
+    end
+    for _, name in ipairs(defaultCardOrder) do
+        if not seen[name] then
+            seen[name] = true
+            order[#order + 1] = name
+        end
+    end
+    return order
+end
+
+local function persistCardOrder(order)
+    storage.set("card_order", table.concat(order, ","))
+    widget.invalidate()
 end
 
 local function splitWrap(text, fontSize, maxWidth)
@@ -92,20 +146,25 @@ local function splitWrap(text, fontSize, maxWidth)
     local line = ""
     for _, codepoint in utf8.codes(text) do
         local char = utf8.char(codepoint)
-        local candidate = line .. char
-        local metrics = draw.measureText(candidate, fontSize, 0, false)
-        if line ~= "" and metrics.width > maxWidth then
+        if char == "\n" then
             lines[#lines + 1] = line
-            line = char
+            line = ""
         else
-            line = candidate
+            local candidate = line .. char
+            local metrics = draw.measureText(candidate, fontSize, 0, false)
+            if line ~= "" and metrics.width > maxWidth then
+                lines[#lines + 1] = line
+                line = char
+            else
+                line = candidate
+            end
         end
     end
     if line ~= "" then lines[#lines + 1] = line end
     return lines
 end
 
-local function drawCard(x, y, w, h, info, pal)
+local function drawCard(x, y, w, h, info, pal, style)
     draw.rect(x, y, w, h, pal.cardBg, layout.cu(10), pal.cardBgA)
     draw.strokeRect(x, y, w, h, pal.cardBd, layout.cu(10), layout.cu(1.0), pal.cardBdA)
 
@@ -114,6 +173,15 @@ local function drawCard(x, y, w, h, info, pal)
     local subFont = layout.fontCu(subFontSize)
     draw.text(x + ipad, y + layout.cu(6), info.title, subFont, pal.cardSub, w - ipad * 2, true, true)
 
+    local ringStyle = info.progress and (style == "ring" or style == "gauge") and style or nil
+
+    -- Middle area between the title and the reserved subtitle strip; ring and
+    -- gauge geometry is derived from it so no dead space remains above/below.
+    local top = y + layout.cu(20)
+    local bottom = y + h - layout.cu(18)
+    local availH = math.max(layout.cu(24), bottom - top)
+    local midY = top + availH / 2
+
     if info.lines then
         local lineY = y + h * 0.32
         local lineH = math.max(layout.cu(12), math.floor(h * 0.11))
@@ -121,6 +189,37 @@ local function drawCard(x, y, w, h, info, pal)
             draw.text(x + ipad, lineY, line.text, lineH, line.color or pal.cardText, w - ipad * 2, false, true)
             lineY = lineY + lineH + layout.cu(2)
         end
+    elseif ringStyle == "ring" then
+        local r = math.max(layout.cu(12), math.min(w * 0.26, availH * 0.42))
+        local cx = x + w / 2
+        local cy = midY
+        local thick = math.max(layout.cu(3), r * 0.16)
+        drawArcSegments(cx, cy, r, thick, 0, 2 * math.pi, pal.trackBg, 1.0)
+        drawArcSegments(cx, cy, r, thick, -math.pi / 2, info.progress * 2 * math.pi, info.color, 1.0)
+        local valFont = math.max(layout.fontCu(12), math.min(layout.fontCu(18), math.floor(r * 0.48)))
+        local vm = draw.measureText(info.value, valFont, 0, true)
+        draw.text(cx - vm.width / 2, cy - vm.height / 2, info.value, valFont, pal.cardText, 0, true)
+    elseif ringStyle == "gauge" then
+        -- Classic 240-degree speedometer arc: from 150 degrees through the
+        -- top to 30 degrees; the value sits at the arc center so the whole
+        -- gauge is balanced between the title and the subtitle strip.
+        local startA = 5 * math.pi / 6
+        local sweepMax = 4 * math.pi / 3
+        local r = math.max(layout.cu(13), math.min(w * 0.32, (midY - top) * 0.98))
+        local cx = x + w / 2
+        local cy = midY
+        local thick = math.max(layout.cu(3), r * 0.14)
+        drawArcSegments(cx, cy, r, thick, startA, sweepMax, pal.trackBg, 1.0)
+        local sweep = info.progress * sweepMax
+        if sweep > 0 then
+            drawArcSegments(cx, cy, r, thick, startA, sweep, info.color, 1.0)
+        end
+        local angle = startA + sweep
+        draw.line(cx, cy, cx + math.cos(angle) * r * 0.64, cy + math.sin(angle) * r * 0.64,
+            math.max(layout.cu(2), thick * 0.5), info.color, 0.9)
+        local valFont = math.max(layout.fontCu(12), math.min(layout.fontCu(16), math.floor(r * 0.38)))
+        local vm = draw.measureText(info.value, valFont, 0, true)
+        draw.text(cx - vm.width / 2, cy - vm.height / 2, info.value, valFont, pal.cardText, 0, true)
     else
         local valFont = math.max(layout.fontCu(15), math.min(layout.fontCu(24), math.floor(h * 0.18)))
         local vm = draw.measureText(info.value, valFont, 0, true)
@@ -130,7 +229,7 @@ local function drawCard(x, y, w, h, info, pal)
     end
 
     local barY = nil
-    if info.progress then
+    if info.progress and not ringStyle then
         local barPad = layout.cu(8)
         local barH = layout.cu(4)
         barY = y + h - layout.cu(16)
@@ -167,91 +266,128 @@ function render()
     local battery = sys.battery()
     local network = sys.network()
     local gpu = sys.gpu and sys.gpu() or nil
+    local disk = sys.disk and sys.disk() or nil
     local w = layout.width()
     local h = layout.height()
     local pal = getPalette()
+    local style = storage.get("card_style") or "bar"
+    if style ~= "ring" and style ~= "gauge" then style = "bar" end
 
     local cards = {}
 
-    if showCard("cpu") then
-        local pct = clamp(cpu.usagePercent)
-        table.insert(cards, {
-            title = "CPU",
-            value = string.format("%.0f%%", pct),
-            progress = pct / 100,
-            color = usageColor(pct, pal),
-            sub = cpu.name ~= "" and cpu.name or (cpu.logicalProcessors and cpu.logicalProcessors > 0 and
-                l10n.tr("lua_widget.system_monitor.threads", cpu.logicalProcessors) or nil),
-            rotateLines = true
-        })
-    end
-
-    if showCard("memory") then
-        local pct = clamp(memory.usagePercent)
-        table.insert(cards, {
-            title = l10n.tr("lua_widget.system_monitor.memory"),
-            value = string.format("%.0f%%", pct),
-            progress = pct / 100,
-            color = usageColor(pct, pal),
-            sub = memory.totalBytes and memory.totalBytes > 0 and
-                string.format("%.1f / %.1f GB",
-                    memory.usedBytes / 1024 / 1024 / 1024,
-                    memory.totalBytes / 1024 / 1024 / 1024) or nil
-        })
-    end
-
-    if showCard("gpu") and gpu and gpu.available then
-        local pct = clamp(gpu.usagePercent)
-        table.insert(cards, {
-            title = "GPU",
-            value = string.format("%.0f%%", pct),
-            progress = pct / 100,
-            color = usageColor(pct, pal),
-            sub = gpu.name or "",
-            rotateLines = true
-        })
-    end
-
-    if showCard("vram") and gpu and gpu.available then
-        local vramUsed = (gpu.vramUsedBytes or 0) / 1024 / 1024 / 1024
-        local vramTotal = (gpu.vramTotalBytes or 1) / 1024 / 1024 / 1024
-        local vramPct = vramTotal > 0 and math.min(100, vramUsed / vramTotal * 100) or 0
-        table.insert(cards, {
-            title = l10n.tr("lua_widget.system_monitor.vram"),
-            value = string.format("%.0f%%", vramPct),
-            progress = vramPct / 100,
-            color = usageColor(vramPct, pal),
-            sub = string.format("%.1f / %.1f GB", vramUsed, vramTotal)
-        })
-    end
-
-    if showCard("network") then
-        table.insert(cards, {
-            title = l10n.tr("lua_widget.system_monitor.network"),
-            color = pal.netDown,
-            lines = {
-                { text = "↓ " .. (network.connected and formatRate(network.downloadBytesPerSec) or "—"),
-                  color = pal.netDown },
-                { text = "↑ " .. (network.connected and formatRate(network.uploadBytesPerSec) or "—"),
-                  color = pal.netUp },
-            }
-        })
-    end
-
-    if showCard("battery") and battery.available then
-        local batPct = battery.percent or 100
-        local status = nil
-        if battery.charging then status = l10n.tr("lua_widget.system_monitor.charging")
-        elseif battery.pluggedIn then status = l10n.tr("lua_widget.system_monitor.plugged_in")
-        elseif batPct <= 20 then status = l10n.tr("lua_widget.system_monitor.low_battery")
-        end
-        table.insert(cards, {
-            title = l10n.tr("lua_widget.system_monitor.battery"),
-            value = string.format("%.0f%%", clamp(batPct)),
-            progress = clamp(batPct) / 100,
-            color = usageColor(100 - batPct, pal),
-            sub = status
-        })
+    local cardBuilders = {
+        cpu = function()
+            if showCard("cpu") then
+                local pct = clamp(cpu.usagePercent)
+                table.insert(cards, {
+                    title = "CPU",
+                    value = string.format("%.0f%%", pct),
+                    progress = pct / 100,
+                    color = usageColor(pct, pal),
+                    sub = cpu.name ~= "" and cpu.name or (cpu.logicalProcessors and cpu.logicalProcessors > 0 and
+                        l10n.tr("lua_widget.system_monitor.threads", cpu.logicalProcessors) or nil),
+                    rotateLines = true
+                })
+            end
+        end,
+        memory = function()
+            if showCard("memory") then
+                local pct = clamp(memory.usagePercent)
+                table.insert(cards, {
+                    title = l10n.tr("lua_widget.system_monitor.memory"),
+                    value = string.format("%.0f%%", pct),
+                    progress = pct / 100,
+                    color = usageColor(pct, pal),
+                    sub = memory.totalBytes and memory.totalBytes > 0 and
+                        string.format("%.1f / %.1f GB",
+                            memory.usedBytes / 1024 / 1024 / 1024,
+                            memory.totalBytes / 1024 / 1024 / 1024) or nil
+                })
+            end
+        end,
+        gpu = function()
+            if showCard("gpu") and gpu and gpu.available then
+                local pct = clamp(gpu.usagePercent)
+                table.insert(cards, {
+                    title = "GPU",
+                    value = string.format("%.0f%%", pct),
+                    progress = pct / 100,
+                    color = usageColor(pct, pal),
+                    sub = gpu.name or "",
+                    rotateLines = true
+                })
+            end
+        end,
+        vram = function()
+            if showCard("vram") and gpu and gpu.available then
+                local vramUsed = (gpu.vramUsedBytes or 0) / 1024 / 1024 / 1024
+                local vramTotal = (gpu.vramTotalBytes or 1) / 1024 / 1024 / 1024
+                local vramPct = vramTotal > 0 and math.min(100, vramUsed / vramTotal * 100) or 0
+                table.insert(cards, {
+                    title = l10n.tr("lua_widget.system_monitor.vram"),
+                    value = string.format("%.0f%%", vramPct),
+                    progress = vramPct / 100,
+                    color = usageColor(vramPct, pal),
+                    sub = string.format("%.1f / %.1f GB", vramUsed, vramTotal)
+                })
+            end
+        end,
+        disk = function()
+            if showCard("disk") and disk and disk.available then
+                local vols = disk.volumes or {}
+                local vol = vols[1]
+                if #vols > 1 then
+                    vol = vols[(subLineIdx % #vols) + 1]
+                end
+                local pct = vol and (vol.usagePercent or 0) or 0
+                local subText = vol and string.format("%s %.0f/%.0f GB", vol.name,
+                    (vol.usedBytes or 0) / (1024 * 1024 * 1024),
+                    (vol.totalBytes or 0) / (1024 * 1024 * 1024)) or nil
+                table.insert(cards, {
+                    title = l10n.tr("lua_widget.system_monitor.disk"),
+                    value = string.format("%.0f%%", clamp(pct)),
+                    progress = clamp(pct) / 100,
+                    color = usageColor(pct, pal),
+                    sub = subText
+                })
+            end
+        end,
+        network = function()
+            if showCard("network") then
+                table.insert(cards, {
+                    title = l10n.tr("lua_widget.system_monitor.network"),
+                    color = pal.netDown,
+                    lines = {
+                        { text = "↓ " .. (network.connected and formatRate(network.downloadBytesPerSec) or "—"),
+                          color = pal.netDown },
+                        { text = "↑ " .. (network.connected and formatRate(network.uploadBytesPerSec) or "—"),
+                          color = pal.netUp },
+                    }
+                })
+            end
+        end,
+        battery = function()
+            if showCard("battery") and battery.available then
+                local batPct = battery.percent or 100
+                local status = nil
+                if battery.charging then status = l10n.tr("lua_widget.system_monitor.charging")
+                elseif battery.pluggedIn then status = l10n.tr("lua_widget.system_monitor.plugged_in")
+                elseif batPct <= 20 then status = l10n.tr("lua_widget.system_monitor.low_battery")
+                end
+                table.insert(cards, {
+                    title = l10n.tr("lua_widget.system_monitor.battery"),
+                    value = string.format("%.0f%%", clamp(batPct)),
+                    progress = clamp(batPct) / 100,
+                    color = usageColor(100 - batPct, pal),
+                    sub = status
+                })
+            end
+        end,
+    }
+    local order = getCardOrder()
+    for _, name in ipairs(order) do
+        local build = cardBuilders[name]
+        if build then build() end
     end
 
     local cols = math.max(1, layout.columns())
@@ -290,7 +426,37 @@ function render()
         local cy = inset + row * (cardH + vGap) - scroll
 
         if cy + cardH > 0 and cy < h then
-            drawCard(cx, cy, cardW, cardH, card, pal)
+            drawCard(cx, cy, cardW, cardH, card, pal, style)
+        end
+    end
+end
+
+function imguiRender()
+    imgui.textWrapped(l10n.tr("lua_widget.system_monitor.order_hint"))
+    imgui.spacing()
+    local order = getCardOrder()
+    for i, name in ipairs(order) do
+        local checked = showCard(name)
+        local newChecked = imgui.checkbox((cardLabels[name] or name) .. "##chk" .. name, checked)
+        if newChecked ~= checked then
+            storage.set("show_" .. name, newChecked and "1" or "0")
+            widget.invalidate()
+        end
+        imgui.sameLine()
+        if i > 1 then
+            -- "##name" gives every button a unique ImGui id while the
+            -- visible label stays the translated Move Up text.
+            if imgui.button(l10n.tr("lua_widget.system_monitor.move_up") .. "##up" .. name) then
+                order[i], order[i - 1] = order[i - 1], order[i]
+                persistCardOrder(order)
+            end
+            imgui.sameLine()
+        end
+        if i < #order then
+            if imgui.button(l10n.tr("lua_widget.system_monitor.move_down") .. "##down" .. name) then
+                order[i], order[i + 1] = order[i + 1], order[i]
+                persistCardOrder(order)
+            end
         end
     end
 end
