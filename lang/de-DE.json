@@ -286,6 +286,7 @@
   "app.settings.migrate_data_success": "Die Daten wurden überprüft und werden nach dem Neustart verschoben.",
   "app.settings.about_snowdesktop": "Über SparkDesktop",
   "app.settings.about_description": "SparkDesktop ist ein Windows-Desktop-Erweiterungstool, das benutzerdefinierte Desktop-Layouts, Symbolrasterverwaltung, Sammlungs-Widgets, Dateikategorisierung und mehr bietet, um Ihren Desktop übersichtlicher und effizienter zu gestalten.",
+  "app.settings.repositories": "Quellcode-Repositories",
   "app.settings.author": "Autor",
   "app.settings.copyright": "Urheberrecht und Lizenz",
   "app.settings.copyright_notice": "Copyright © 2026 Guo Yunzhe (FreeFallingSnow)",

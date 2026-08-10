@@ -286,6 +286,7 @@
   "app.settings.migrate_data_success": "Os dados foram verificados e serão movidos após a reinicialização.",
   "app.settings.about_snowdesktop": "Sobre o SparkDesktop",
   "app.settings.about_description": "SparkDesktop é uma ferramenta de aprimoramento da área de trabalho do Windows que fornece layouts de área de trabalho personalizados, gerenciamento de grade de ícones, widgets de coleção, categorização de arquivos e muito mais para tornar sua área de trabalho mais limpa e eficiente.",
+  "app.settings.repositories": "Repositórios de código-fonte",
   "app.settings.author": "Autor",
   "app.settings.copyright": "Direitos autorais e licença",
   "app.settings.copyright_notice": "Copyright © 2026 Guo Yunzhe (FreeFallingSnow)",

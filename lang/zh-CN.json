@@ -286,6 +286,7 @@
     "app.settings.migrate_data_success": "数据已验证，将在重启后迁入。",
     "app.settings.about_snowdesktop": "关于 SparkDesktop",
     "app.settings.about_description": "SparkDesktop 是一款 Windows 桌面增强工具，提供自定义桌面布局、图标网格管理、集合组件、桌面文件分类等功能，让桌面更整洁高效。",
+    "app.settings.repositories": "开源仓库",
     "app.settings.author": "作者",
     "app.settings.copyright": "版权与许可",
     "app.settings.copyright_notice": "Copyright © 2026 郭云哲（逍遥飘雪）",

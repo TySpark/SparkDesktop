@@ -5336,6 +5336,15 @@ void SettingsWindow::DrawAboutPage()
         }
     };
 
+    ImGui::Spacing();
+    ImGui::SeparatorText(_L("app.settings.repositories"));
+    ImGui::Spacing();
+
+    LinkButton("https://github.com/TySpark/SparkDesktop",
+        "https://github.com/TySpark/SparkDesktop");
+    LinkButton("https://gitee.com/TySpark/SparkDesktop",
+        "https://gitee.com/TySpark/SparkDesktop");
+
     ImGui::SeparatorText(_L("app.settings.version"));
     ImGui::TextDisabled("SparkDesktop v" SNOWDESKTOP_VERSION);
     if (ImGui::IsItemClicked())

@@ -286,6 +286,7 @@
   "app.settings.migrate_data_success": "Les données ont été vérifiées et seront déplacées après le redémarrage.",
   "app.settings.about_snowdesktop": "À propos de SparkDesktop",
   "app.settings.about_description": "SparkDesktop est un outil d'amélioration du bureau Windows qui fournit des dispositions de bureau personnalisées, une gestion de grille d'icônes, des widgets de collection, une catégorisation de fichiers et bien plus encore pour rendre votre bureau plus propre et plus efficace.",
+  "app.settings.repositories": "Dépôts de code source",
   "app.settings.author": "Auteur",
   "app.settings.copyright": "Droits d'auteur et licence",
   "app.settings.copyright_notice": "Copyright © 2026 Guo Yunzhe (FreeFallingSnow)",

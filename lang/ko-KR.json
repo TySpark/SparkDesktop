@@ -286,6 +286,7 @@
   "app.settings.migrate_data_success": "데이터가 확인되었으며 다시 시작한 후 이동됩니다.",
   "app.settings.about_snowdesktop": "SparkDesktop 정보",
   "app.settings.about_description": "SparkDesktop은 사용자 정의 데스크탑 레이아웃, 아이콘 그리드 관리, 컬렉션 위젯, 파일 분류 등을 제공하여 데스크탑을 더 깔끔하고 효율적으로 만드는 Windows 데스크탑 향상 도구입니다.",
+  "app.settings.repositories": "소스 코드 저장소",
   "app.settings.author": "작성자",
   "app.settings.copyright": "저작권 및 라이센스",
   "app.settings.copyright_notice": "저작권 © 2026 Guo Yunzhe(FreeFallingSnow)",

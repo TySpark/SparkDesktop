@@ -286,6 +286,7 @@
   "app.settings.migrate_data_success": "データは検証されたため、再起動後に移動されます。",
   "app.settings.about_snowdesktop": "SparkDesktop について",
   "app.settings.about_description": "SparkDesktop は、カスタム デスクトップ レイアウト、アイコン グリッド管理、コレクション ウィジェット、ファイル分類などを提供し、デスクトップをよりクリーンかつ効率的にする Windows デスクトップ拡張ツールです。",
+  "app.settings.repositories": "ソースコード リポジトリ",
   "app.settings.author": "作成者",
   "app.settings.copyright": "著作権とライセンス",
   "app.settings.copyright_notice": "著作権 © 2026 Guo Yunzhe (FreeFallingSnow)",
