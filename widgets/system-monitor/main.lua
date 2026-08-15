@@ -432,28 +432,36 @@ function render()
 end
 
 function imguiRender()
+    imgui.separator()
+    imgui.spacing()
     imgui.textWrapped(l10n.tr("lua_widget.system_monitor.order_hint"))
     imgui.spacing()
     local order = getCardOrder()
     for i, name in ipairs(order) do
+        -- Bare checkbox (no text label) followed by the card name, then a
+        -- fixed button column so all rows line up neatly.
         local checked = showCard(name)
-        local newChecked = imgui.checkbox((cardLabels[name] or name) .. "##chk" .. name, checked)
+        local newChecked = imgui.checkbox("##chk" .. name, checked)
         if newChecked ~= checked then
             storage.set("show_" .. name, newChecked and "1" or "0")
             widget.invalidate()
         end
         imgui.sameLine()
+        imgui.text(cardLabels[name] or name)
+        imgui.sameLine(100)
         if i > 1 then
-            -- "##name" gives every button a unique ImGui id while the
-            -- visible label stays the translated Move Up text.
-            if imgui.button(l10n.tr("lua_widget.system_monitor.move_up") .. "##up" .. name) then
+            -- Icon + text label; "##name" keeps every button's ImGui id
+            -- unique while the visible label stays the translated text.
+            if imgui.button(utf8.char(0x2191) .. " " ..
+                l10n.tr("lua_widget.system_monitor.move_up") .. "##up" .. name) then
                 order[i], order[i - 1] = order[i - 1], order[i]
                 persistCardOrder(order)
             end
             imgui.sameLine()
         end
         if i < #order then
-            if imgui.button(l10n.tr("lua_widget.system_monitor.move_down") .. "##down" .. name) then
+            if imgui.button(utf8.char(0x2193) .. " " ..
+                l10n.tr("lua_widget.system_monitor.move_down") .. "##down" .. name) then
                 order[i], order[i + 1] = order[i + 1], order[i]
                 persistCardOrder(order)
             end
